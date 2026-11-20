@@ -28,17 +28,24 @@ struct Shared {
     job: job::Job,
     stopped: AtomicBool,
     finished: AtomicBool,
+    /// Held while an event is checked and handed on, so nothing can slip
+    /// past the check and land after the turn's `Done`.
+    gate: Mutex<()>,
     sink: Sink,
 }
 
 impl Shared {
     /// Passes an event on unless the turn is over; the first `Done` ends it.
     fn emit(&self, event: ChatEvent) {
+        let _gate = self
+            .gate
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if self.finished.load(Ordering::SeqCst) {
             return;
         }
-        if matches!(event, ChatEvent::Done { .. }) && self.finished.swap(true, Ordering::SeqCst) {
-            return;
+        if matches!(event, ChatEvent::Done { .. }) {
+            self.finished.store(true, Ordering::SeqCst);
         }
         (self.sink)(event);
     }
@@ -72,10 +79,8 @@ impl Runner {
         let mut child = command.spawn()?;
         let stdout = child.stdout.take().expect("piped stdout");
         let mut stderr = child.stderr.take().expect("piped stderr");
-        if let Some(mut stdin) = child.stdin.take() {
-            // A child that exits before reading is reported by its exit.
-            let _ = stdin.write_all(stdin_text.as_bytes());
-        }
+        // Into the job before anything else, so whatever the child starts
+        // from here on is stopped with it.
         #[cfg(windows)]
         let job = {
             use std::os::windows::io::AsRawHandle;
@@ -83,12 +88,22 @@ impl Runner {
             job.assign(child.as_raw_handle());
             job
         };
+        if let Some(mut stdin) = child.stdin.take() {
+            // On a thread of its own: a message longer than the pipe holds
+            // waits for the child to read it, and the window must not.
+            // A child that exits before reading is reported by its exit;
+            // dropping `stdin` closes it.
+            std::thread::spawn(move || {
+                let _ = stdin.write_all(stdin_text.as_bytes());
+            });
+        }
         let shared = Arc::new(Shared {
             #[cfg(windows)]
             job,
             child: Mutex::new(Some(child)),
             stopped: AtomicBool::new(false),
             finished: AtomicBool::new(false),
+            gate: Mutex::new(()),
             sink: Arc::new(on_event),
         });
 
@@ -302,5 +317,56 @@ mod tests {
             "only one Done"
         );
         assert!(!runner.is_running());
+    }
+
+    #[test]
+    fn long_message_does_not_block_start() {
+        // Far past a pipe's buffer, to a child that never reads its stdin.
+        let message = "x".repeat(4 * 1024 * 1024);
+        let (tx, rx) = mpsc::channel();
+        let began = std::time::Instant::now();
+        let runner = Runner::start(
+            "cmd".into(),
+            ["/C", "ping -n 4 127.0.0.1 >NUL"]
+                .iter()
+                .map(OsString::from)
+                .collect(),
+            message,
+            None,
+            move |event| {
+                let _ = tx.send(event);
+            },
+        )
+        .unwrap();
+        assert!(
+            began.elapsed() < Duration::from_secs(1),
+            "start blocked for {:?}",
+            began.elapsed()
+        );
+        runner.stop();
+        assert_eq!(collect(&rx), vec![ChatEvent::Done { session_id: None }]);
+    }
+
+    #[test]
+    fn nothing_lands_after_stop() {
+        // A stream of replies, stopped in the middle of it, twenty times:
+        // after the Done that Stop sends, not one more event may arrive.
+        let dir = std::env::temp_dir().join(format!("concat-chat-race-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let fixture = dir.join("many.jsonl");
+        let line = "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"t\"}]}}
+";
+        std::fs::write(&fixture, line.repeat(20_000)).unwrap();
+        for _ in 0..10 {
+            let (runner, rx) = start_cmd(&["/C", "type", fixture.to_str().unwrap()]);
+            std::thread::sleep(Duration::from_millis(5));
+            runner.stop();
+            let mut seen_done = false;
+            while let Ok(event) = rx.recv_timeout(Duration::from_millis(300)) {
+                assert!(!seen_done, "{event:?} arrived after Done");
+                seen_done = matches!(event, ChatEvent::Done { .. });
+            }
+            assert!(seen_done);
+        }
     }
 }

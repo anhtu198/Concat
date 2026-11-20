@@ -30,6 +30,8 @@ pub struct Lookup {
     /// `%LOCALAPPDATA%`, where the Claude desktop app keeps its bundled
     /// copies of Claude Code.
     pub local_app_data: Option<PathBuf>,
+    /// `%APPDATA%`, where `npm install -g` puts its command shims.
+    pub app_data: Option<PathBuf>,
 }
 
 impl Lookup {
@@ -45,12 +47,14 @@ impl Lookup {
                 .or_else(|| var("HOME"))
                 .map(PathBuf::from),
             local_app_data: var("LOCALAPPDATA").map(PathBuf::from),
+            app_data: var("APPDATA").map(PathBuf::from),
         }
     }
 }
 
 /// Claude Code's executable: the override, then `PATH`, then
-/// `~/.local/bin`, then the newest copy the Claude desktop app carries.
+/// `~/.local/bin`, then the newest copy the Claude desktop app carries,
+/// then an npm install's `claude.cmd` (run through [`launch_for`]).
 pub fn find_claude(lookup: &Lookup) -> Option<PathBuf> {
     if let Some(path) = lookup.override_path.as_ref().filter(|path| path.is_file()) {
         return Some(path.clone());
@@ -66,10 +70,62 @@ pub fn find_claude(lookup: &Lookup) -> Option<PathBuf> {
     {
         return Some(found);
     }
-    lookup
+    if let Some(found) = lookup
         .local_app_data
         .as_ref()
         .and_then(|dir| newest_bundled(&dir.join("Claude-Data")))
+    {
+        return Some(found);
+    }
+    let shim = |dir: &Path| Some(dir.join("claude.cmd")).filter(|path| path.is_file());
+    lookup
+        .path_dirs
+        .iter()
+        .find_map(|dir| shim(dir))
+        .or_else(|| {
+            lookup
+                .app_data
+                .as_ref()
+                .and_then(|dir| shim(&dir.join("npm")))
+        })
+}
+
+/// The program to start for `claude` and the arguments that go before
+/// Claude Code's own. An executable runs as it is. An npm `.cmd` shim is
+/// not run through cmd.exe, whose quoting would mangle the JSON arguments:
+/// the script it names is run with `node` from `PATH` instead.
+pub fn launch_for(claude: &Path, lookup: &Lookup) -> (PathBuf, Vec<OsString>) {
+    let is_shim = claude
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("cmd"));
+    if is_shim && let Some(target) = shim_target(claude) {
+        if target
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("exe"))
+        {
+            return (target, Vec::new());
+        }
+        let node = lookup
+            .path_dirs
+            .iter()
+            .map(|dir| dir.join("node.exe"))
+            .find(|path| path.is_file())
+            .unwrap_or_else(|| PathBuf::from("node"));
+        return (node, vec![target.into_os_string()]);
+    }
+    (claude.to_path_buf(), Vec::new())
+}
+
+/// The file an npm shim runs: the quoted path after `%dp0%\`.
+fn shim_target(shim: &Path) -> Option<PathBuf> {
+    let text = std::fs::read_to_string(shim).ok()?;
+    let start = text.find("%dp0%\\")? + "%dp0%\\".len();
+    let rest = &text[start..];
+    let relative = &rest[..rest.find('"')?];
+    Some(
+        shim.parent()?
+            .join(relative.replace('\\', std::path::MAIN_SEPARATOR_STR)),
+    )
 }
 
 /// `<root>/*/claude-code/<version>/**/claude.exe`, the highest version.
@@ -172,6 +228,9 @@ pub fn claude_args(spec: &RunSpec) -> Vec<OsString> {
     args.push(mcp_config_json(spec).into());
     for arg in [
         "--strict-mcp-config",
+        // None of Claude Code's own tools: Concat's MCP is all it may use.
+        "--tools",
+        "",
         "--allowedTools",
         "mcp__concat",
         "--disallowedTools",
@@ -215,6 +274,7 @@ pub fn system_prompt(project_path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::OsString;
     use std::fs;
     use std::path::PathBuf;
 
@@ -253,6 +313,7 @@ mod tests {
             path_dirs: vec![dir.join("bin")],
             home: None,
             local_app_data: None,
+            app_data: None,
         };
         assert_eq!(find_claude(&lookup), Some(mine));
     }
@@ -269,6 +330,7 @@ mod tests {
             path_dirs: vec![],
             home: None,
             local_app_data: Some(dir.clone()),
+            app_data: None,
         };
         assert_eq!(find_claude(&lookup), Some(new));
     }
@@ -280,8 +342,55 @@ mod tests {
             path_dirs: vec![],
             home: None,
             local_app_data: None,
+            app_data: None,
         };
         assert_eq!(find_claude(&lookup), None);
+    }
+
+    #[test]
+    fn find_claude_finds_npm_shim() {
+        let dir = scratch("npm");
+        let shim = dir.join("npm").join("claude.cmd");
+        touch(&shim);
+        let lookup = Lookup {
+            app_data: Some(dir.clone()),
+            ..Lookup::default()
+        };
+        assert_eq!(find_claude(&lookup), Some(shim));
+    }
+
+    /// What npm writes for a package's command, trimmed to what matters.
+    const NPM_SHIM: &str = "@ECHO off\r\nGOTO start\r\n:start\r\nSETLOCAL\r\n\"%_prog%\"  \"%dp0%\\node_modules\\@anthropic-ai\\claude-code\\cli.js\" %*\r\n";
+
+    #[test]
+    fn launch_runs_npm_shim_script_with_node() {
+        let dir = scratch("launch");
+        let shim = dir.join("npm").join("claude.cmd");
+        touch(&shim);
+        fs::write(&shim, NPM_SHIM).unwrap();
+        let node = dir.join("nodejs").join("node.exe");
+        touch(&node);
+        let lookup = Lookup {
+            path_dirs: vec![dir.join("nodejs")],
+            ..Lookup::default()
+        };
+        let (program, leading) = launch_for(&shim, &lookup);
+        assert_eq!(program, node);
+        let script = dir
+            .join("npm")
+            .join("node_modules")
+            .join("@anthropic-ai")
+            .join("claude-code")
+            .join("cli.js");
+        assert_eq!(leading, vec![OsString::from(script)]);
+    }
+
+    #[test]
+    fn launch_runs_exe_directly() {
+        let exe = PathBuf::from(r"C:\x\claude.exe");
+        let (program, leading) = launch_for(&exe, &Lookup::default());
+        assert_eq!(program, exe);
+        assert!(leading.is_empty());
     }
 
     fn strings(args: &[std::ffi::OsString]) -> Vec<String> {
@@ -304,6 +413,9 @@ mod tests {
             assert!(args.iter().any(|a| a == want), "missing {want} in {args:?}");
         }
         assert!(!args.iter().any(|a| a == "--resume"));
+        // Claude Code's own tools (Read, Glob, Grep...) are switched off.
+        let tools = args.iter().position(|a| a == "--tools").expect("--tools");
+        assert_eq!(args[tools + 1], "");
     }
 
     #[test]

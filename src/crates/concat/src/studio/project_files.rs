@@ -143,6 +143,7 @@ impl Studio {
                     );
                 }
                 self.session = Some(session);
+                crate::chat::project_changed(self);
                 // The relink dialog belongs to the project that opened it;
                 // this project's own check follows below.
                 self.relink = Default::default();
@@ -422,6 +423,7 @@ impl Studio {
             self.host.open_projects.release(session.path());
         }
         self.session = None;
+        crate::chat::project_changed(self);
         // Whatever a worker still brings back for this project is dropped
         // at delivery; the sheets that were waiting on one stop waiting.
         crate::host::next_project_epoch();

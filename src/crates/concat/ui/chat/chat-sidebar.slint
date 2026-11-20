@@ -37,7 +37,8 @@ export global Chat {
     in property <string> where;
     /// Bumped by Rust after bubbles change, to scroll to the end.
     in property <int> scroll-tick;
-    callback send(string);
+    /// True when the message went; false keeps the words in the box.
+    callback send(string) -> bool;
     callback stop();
     callback new-conversation();
     callback toggle();
@@ -205,8 +206,9 @@ export component ChatSidebar inherits Rectangle {
                     capture-key-pressed(event) => {
                         if (event.text == Key.Return && !event.modifiers.shift) {
                             if (!Chat.busy && input.text != "") {
-                                Chat.send(input.text);
-                                input.text = "";
+                                if (Chat.send(input.text)) {
+                                    input.text = "";
+                                }
                             }
                             return accept;
                         }
@@ -240,8 +242,9 @@ export component ChatSidebar inherits Rectangle {
                     primary: true;
                     enabled: input.text != "";
                     clicked => {
-                        Chat.send(input.text);
-                        input.text = "";
+                        if (Chat.send(input.text)) {
+                            input.text = "";
+                        }
                     }
                 }
                 if Chat.busy: Button {

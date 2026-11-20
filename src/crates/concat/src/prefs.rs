@@ -189,6 +189,10 @@ pub struct Preferences {
     /// The Concat API on a socket while the window is open.
     #[serde(default)]
     pub server: ServerPrefs,
+    /// velarista: the Claude chat column folded to its rail.
+    pub chat_closed: bool,
+    /// velarista: the open chat column's width, as last dragged.
+    pub chat_width: Option<f32>,
     /// The look new titles start from and generated captions are set in,
     /// kept from a title by the Text panel's "Use for new titles"; its
     /// words are empty. None starts titles in the bundled face.

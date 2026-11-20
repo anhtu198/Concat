@@ -57,6 +57,7 @@ import { AvatarData } from "primitives/avatar.slint";
 import { VoiceoverData, VoiceoverPanel } from "dialogs/voiceover.slint";
 import { DockDivider, DockSide, SeatBox } from "dock.slint";
 import { Editor } from "editor.slint";
+import { Chat, ChatBubble, ChatSidebar } from "chat/chat-sidebar.slint";
 import { PaneKind, Panes } from "workspace/pane-switcher.slint";
 import {
     ChipOption,
@@ -187,6 +188,8 @@ export {
     Sounds,
     VoiceCardData,
     NewVoiceData,
+    Chat,
+    ChatBubble,
 }
 export component App inherits Window {
     title: "Concat";
@@ -806,8 +809,14 @@ export component App inherits Window {
             // nothing is passed to it: it is a box with four seats in it, and
             // the views inside those seats reach the state directly. See
             // editor.slint.
-            if !root.on-start && !root.phone: Workspace {
+            // velarista: the Claude chat column on the far left, the full
+            // height of the workspace beside it (src/chat.rs).
+            if !root.on-start && !root.phone: HorizontalLayout {
                 vertical-stretch: 1;
+                ChatSidebar {}
+                Workspace {
+                    horizontal-stretch: 1;
+                }
             }
 
             // The phone's editor reads the same global; only the shell round

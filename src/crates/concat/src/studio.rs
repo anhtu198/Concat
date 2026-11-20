@@ -1096,6 +1096,8 @@ pub struct Studio {
     // ── the sheets and menus ──
     pub export: crate::panes::export::ExportPane,
     pub settings: crate::panes::settings::SettingsPane,
+    /// velarista: the Claude chat column; see `crate::chat`.
+    pub chat: crate::chat::ChatState,
     pub relink: crate::panes::relink::RelinkPane,
     /// The notice that part of the project cannot be shown, held back while
     /// the relink dialog the same open raised is up; raised when it closes.
@@ -3122,6 +3124,7 @@ impl Studio {
             monitor: crate::panes::monitor::MonitorPane::default(),
             export: Default::default(),
             settings: crate::panes::settings::SettingsPane::default(),
+            chat: Default::default(),
             relink: crate::panes::relink::RelinkPane::default(),
             unread_pending: None,
             confirm: None,

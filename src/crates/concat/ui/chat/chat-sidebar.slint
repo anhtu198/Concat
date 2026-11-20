@@ -1,0 +1,263 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 Jareer Abdullah and Concat contributors
+// The Claude chat column (velarista fork): a column of its own on the far
+// left of the workspace, the full height of library and timeline, that
+// folds to a thin rail with one icon. Its state lives in the `Chat` global so
+// the window only places it; Rust (src/chat.rs) fills and answers it.
+
+import { ScrollView } from "std-widgets.slint";
+import { Theme } from "../theme/theme.slint";
+import { I18n } from "../i18n.slint";
+import { Glyph, Icon } from "../icons.slint";
+import { Button } from "../primitives/modal.slint";
+import { IconButton } from "../primitives/panel.slint";
+import { ColSplitter } from "../workspace/splitter.slint";
+
+/// One line of the conversation.
+export struct ChatBubble {
+    /// "me", "claude", "tool" or "error"
+    role: string,
+    text: string,
+}
+
+export global Chat {
+    /// Open, or folded to the rail.
+    in-out property <bool> open: true;
+    /// The open column's width.
+    in-out property <length> width: 340px;
+    in property <[ChatBubble]> bubbles;
+    /// A reply is running.
+    in property <bool> busy;
+    /// A reply arrived while the column was folded.
+    in property <bool> unread;
+    /// The window does not let scripts edit its project.
+    in property <bool> live-off;
+    /// Where the last message was sent from, already worded
+    /// ("kèm vị trí 00:12"); empty before the first.
+    in property <string> where;
+    /// Bumped by Rust after bubbles change, to scroll to the end.
+    in property <int> scroll-tick;
+    callback send(string);
+    callback stop();
+    callback new-conversation();
+    callback toggle();
+    /// The splitter moved by `delta` from where it was pressed.
+    callback resized(length);
+    callback resize-started();
+    callback enable-live();
+}
+
+component Bubble inherits Rectangle {
+    in property <ChatBubble> bubble;
+    property <bool> mine: bubble.role == "me";
+    property <bool> quiet: bubble.role == "tool";
+    background: mine ? Theme.accent-soft : bubble.role == "error" ? Theme.danger-soft : quiet ? transparent : Theme.raised;
+    border-radius: Theme.r;
+    HorizontalLayout {
+        padding-left: quiet ? 2px : 10px;
+        padding-right: quiet ? 2px : 10px;
+        padding-top: quiet ? 0px : 7px;
+        padding-bottom: quiet ? 0px : 7px;
+        Text {
+            text: bubble.text;
+            wrap: word-wrap;
+            color: quiet ? Theme.fg-dim : Theme.fg;
+            font-size: quiet ? Theme.fs-sm : Theme.fs;
+            font-italic: quiet;
+            horizontal-alignment: mine ? right : left;
+        }
+    }
+}
+
+export component ChatSidebar inherits Rectangle {
+    in property <length> window-width;
+    width: Chat.open ? Chat.width : 40px;
+    background: Theme.panel;
+
+    // ── folded: the rail ──
+    if !Chat.open: Rectangle {
+        VerticalLayout {
+            padding-top: 10px;
+            alignment: start;
+            HorizontalLayout {
+                alignment: center;
+                Rectangle {
+                    width: 30px;
+                    height: 30px;
+                    border-radius: Theme.r;
+                    background: rail-touch.has-hover ? Theme.field-hover : transparent;
+                    Icon {
+                        glyph: Glyph.sparkle;
+                        size: 16px;
+                        tint: Theme.accent;
+                    }
+                    if Chat.busy || Chat.unread: Rectangle {
+                        x: parent.width - 9px;
+                        y: 3px;
+                        width: 6px;
+                        height: 6px;
+                        border-radius: 3px;
+                        background: Theme.accent;
+                    }
+                    rail-touch := TouchArea {
+                        clicked => { Chat.toggle(); }
+                    }
+                }
+            }
+        }
+        Rectangle {
+            x: parent.width - 1px;
+            width: 1px;
+            background: Theme.line;
+        }
+    }
+
+    // ── open: the conversation ──
+    if Chat.open: Rectangle {
+        VerticalLayout {
+            padding: 8px;
+            spacing: 6px;
+
+            // header
+            HorizontalLayout {
+                spacing: 4px;
+                height: Theme.h;
+                Icon {
+                    glyph: Glyph.sparkle;
+                    size: 14px;
+                    tint: Theme.accent;
+                    y: (parent.height - self.height) / 2;
+                }
+                Text {
+                    text: I18n.t("chat.title");
+                    color: Theme.fg;
+                    font-size: Theme.fs-lg;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                }
+                IconButton {
+                    glyph: Glyph.plus;
+                    label: I18n.t("chat.newConversation");
+                    enabled: !Chat.busy;
+                    clicked => { Chat.new-conversation(); }
+                }
+                IconButton {
+                    glyph: Glyph.chevron-left;
+                    label: I18n.t("chat.collapse");
+                    clicked => { Chat.toggle(); }
+                }
+            }
+
+            if Chat.live-off: Rectangle {
+                background: Theme.danger-soft;
+                border-radius: Theme.r;
+                VerticalLayout {
+                    padding: 8px;
+                    spacing: 6px;
+                    Text {
+                        text: I18n.t("chat.liveOff");
+                        wrap: word-wrap;
+                        color: Theme.fg;
+                        font-size: Theme.fs-sm;
+                    }
+                    Button {
+                        label: I18n.t("chat.enableLive");
+                        primary: true;
+                        clicked => { Chat.enable-live(); }
+                    }
+                }
+            }
+
+            // the conversation; a new bubble scrolls it to its end
+            list := ScrollView {
+                vertical-stretch: 1;
+                property <int> tick: Chat.scroll-tick;
+                changed tick => {
+                    self.content-y = min(0px, self.visible-height - self.content-height);
+                }
+                VerticalLayout {
+                    spacing: 6px;
+                    alignment: start;
+                    for bubble in Chat.bubbles: Bubble {
+                        bubble: bubble;
+                    }
+                }
+            }
+
+            if Chat.where != "": Text {
+                text: Chat.where;
+                color: Theme.fg-dim;
+                font-size: Theme.fs-xs;
+            }
+
+            // the message
+            Rectangle {
+                min-height: 64px;
+                max-height: 160px;
+                background: Theme.field;
+                border-radius: Theme.r;
+                border-width: 1px;
+                border-color: input.has-focus ? Theme.accent : Theme.line;
+                keys := FocusScope {
+                    // Enter sends, Shift+Enter is a new line. Nothing else
+                    // is taken, so Telex typing (Unikey, EVKey) is untouched.
+                    capture-key-pressed(event) => {
+                        if (event.text == Key.Return && !event.modifiers.shift) {
+                            if (!Chat.busy && input.text != "") {
+                                Chat.send(input.text);
+                                input.text = "";
+                            }
+                            return accept;
+                        }
+                        return reject;
+                    }
+                    input := TextInput {
+                        x: 8px;
+                        y: 6px;
+                        width: parent.width - 16px;
+                        height: parent.height - 12px;
+                        single-line: false;
+                        wrap: word-wrap;
+                        color: Theme.fg;
+                        font-size: Theme.fs;
+                        selection-background-color: Theme.accent;
+                    }
+                }
+                if input.text == "": Text {
+                    x: 8px;
+                    y: 6px;
+                    text: I18n.t("chat.placeholder");
+                    color: Theme.fg-dim;
+                    font-size: Theme.fs;
+                }
+            }
+
+            HorizontalLayout {
+                alignment: end;
+                if !Chat.busy: Button {
+                    label: I18n.t("chat.send");
+                    primary: true;
+                    enabled: input.text != "";
+                    clicked => {
+                        Chat.send(input.text);
+                        input.text = "";
+                    }
+                }
+                if Chat.busy: Button {
+                    label: I18n.t("chat.stop");
+                    danger: true;
+                    clicked => { Chat.stop(); }
+                }
+            }
+        }
+
+        // the edge, dragged like the workspace's own gutters
+        ColSplitter {
+            x: parent.width - self.width;
+            height: parent.height;
+            pressed => { Chat.resize-started(); }
+            moved(delta) => { Chat.resized(delta); }
+        }
+    }
+}

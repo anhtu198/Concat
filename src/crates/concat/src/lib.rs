@@ -32,6 +32,8 @@ mod ui {
 }
 
 mod batch_volume;
+// velarista: the Claude chat column (ui/chat/chat-sidebar.slint).
+mod chat;
 mod chips;
 mod dock;
 mod fonts;
@@ -527,6 +529,7 @@ fn start(project: Option<std::path::PathBuf>, smoke: Smoke) -> Result<(), slint:
         models: Models::new(),
     });
     Shell::install(shell.clone());
+    chat::install(&app);
 
     // The machine's fonts, for the Text inspector's picker. Read on a
     // worker: on a machine with a few thousand faces it is a moment, and

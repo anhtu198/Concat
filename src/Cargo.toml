@@ -12,6 +12,7 @@ license = "AGPL-3.0-or-later"
 concat-core = { path = "crates/concat-core" }
 concat-media = { path = "crates/concat-media" }
 concat-project = { path = "crates/concat-project" }
+concat-chat = { path = "crates/concat-chat" }
 concat-render = { path = "crates/concat-render" }
 concat-export = { path = "crates/concat-export" }
 concat-host = { path = "crates/concat-host" }

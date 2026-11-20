@@ -57,7 +57,7 @@ the edit on the project open on screen, where the owner watches it land and can 
 - **Port of ZataCut `zatacut/claude_bridge.py`** (Python, ~320 lines), rewritten in Rust as `src/chat.rs`:
   - `find_claude()`: env `CONCAT_CLAUDE` -> `claude` on PATH -> `~/.local/bin/claude.exe` -> newest
     `%LOCALAPPDATA%\Claude-Data\*\claude-code\<ver>\**\claude.exe`.
-  - Arguments per message: `-p --output-format stream-json --verbose --mcp-config <json> --strict-mcp-config
+  - Arguments per message (CHANGED 2026-11-20 at the owner's request: Claude Code's own tools are KEPT, `--permission-mode bypassPermissions`, no --tools/--allowedTools/--disallowedTools; risky actions are rules in the system prompt): `-p --output-format stream-json --verbose --mcp-config <json> --strict-mcp-config
     --tools "" --allowedTools mcp__concat --disallowedTools Bash Edit Write WebFetch WebSearch
     --append-system-prompt <rules> --max-turns 60 [--resume <session id>]`; message on stdin; no console window.
   - MCP config: server `concat` = `std::env::current_exe()` with `--mcp window`, env `CONCAT_API_ADDRESS` /

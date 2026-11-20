@@ -13,9 +13,7 @@ use concat_chat::claude::{Lookup, RunSpec, claude_args, find_claude, launch_for,
 use concat_chat::runner::Runner;
 use concat_chat::stream::ChatEvent;
 
-#[test]
-#[ignore = "spends a real Claude turn"]
-fn real_claude_turn() {
+fn turn(message: &str) -> Vec<ChatEvent> {
     let lookup = Lookup::from_env();
     let claude = find_claude(&lookup).expect("Claude Code on this machine");
     let spec = RunSpec {
@@ -32,7 +30,7 @@ fn real_claude_turn() {
     let _runner = Runner::start(
         program,
         args,
-        "Reply with exactly the word: PONG".into(),
+        message.into(),
         Some(std::env::temp_dir()),
         move |event| {
             let _ = tx.send(event);
@@ -48,6 +46,13 @@ fn real_claude_turn() {
         }
     }
     println!("{events:#?}");
+    events
+}
+
+#[test]
+#[ignore = "spends a real Claude turn"]
+fn real_claude_turn() {
+    let events = turn("Reply with exactly the word: PONG");
     assert!(
         events
             .iter()
@@ -60,4 +65,23 @@ fn real_claude_turn() {
             session_id: Some(_)
         })
     ));
+}
+
+#[test]
+#[ignore = "spends a real Claude turn"]
+fn real_claude_uses_its_own_tools() {
+    // A built-in tool, used with no prompt to answer: the chat keeps them.
+    let events = turn(
+        "Use your file tools to check whether C:/Windows/System32/notepad.exe exists.          Reply with exactly one word: EXISTS or MISSING.",
+    );
+    assert!(
+        events.iter().any(|e| matches!(e, ChatEvent::Tool { .. })),
+        "{events:?}"
+    );
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, ChatEvent::Text(t) if t.contains("EXISTS"))),
+        "{events:?}"
+    );
 }

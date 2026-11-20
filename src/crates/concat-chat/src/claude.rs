@@ -228,17 +228,12 @@ pub fn claude_args(spec: &RunSpec) -> Vec<OsString> {
     args.push(mcp_config_json(spec).into());
     for arg in [
         "--strict-mcp-config",
-        // None of Claude Code's own tools: Concat's MCP is all it may use.
-        "--tools",
-        "",
-        "--allowedTools",
-        "mcp__concat",
-        "--disallowedTools",
-        "Bash",
-        "Edit",
-        "Write",
-        "WebFetch",
-        "WebSearch",
+        // All of Claude Code's own tools stay (reading files, finding and
+        // fetching footage, ffmpeg, the web) beside Concat's MCP. A headless
+        // turn has nobody to answer a permission prompt, so none is asked;
+        // the system prompt says what to check with the person first.
+        "--permission-mode",
+        "bypassPermissions",
         "--append-system-prompt",
     ] {
         args.push(arg.into());
@@ -256,7 +251,10 @@ pub fn claude_args(spec: &RunSpec) -> Vec<OsString> {
 /// The rules Claude works by in the chat; `{path}` is the project folder.
 pub const SYSTEM_PROMPT_TEMPLATE: &str = "\
 You are the editing assistant inside Concat, a video editor. The person is watching the project open in the window \
-while you work. Edit it only through the mcp__concat__ tools and pass this project folder as `path`: {path}
+while you work. Edit the timeline through the mcp__concat__ tools and pass this project folder as `path`: {path}
+You also have Claude Code's own tools on this computer: read files and scripts, find footage, photos and music on \
+the disks, run ffmpeg or other installed tools to prepare clips, search the web. Bring a file into the project with \
+media_import, then place it with clip_add.
 Each message starts with a [PLAYHEAD CONTEXT] block written by the window: \"here\", \"this\", \"chỗ này\", \
 \"đoạn này\" mean the playhead time and the clips listed there, or the selected clips. To see the frame, call \
 preview_frame at the playhead time.
@@ -264,6 +262,9 @@ Small edits (change a text, colour, trim or move one clip, add one title or effe
 undo step the person can Ctrl+Z. Big edits (re-cutting the video, deleting or adding many clips, anything over about \
 five edits) - first describe the plan in a few short lines and wait for the person's OK.
 Never call project_save, project_close or project_open on another folder: the window saves this project itself.
+Ask the person first, and wait for their OK, before: deleting, moving or overwriting any file you did not create in \
+this turn; downloading anything from the internet; installing software; anything that costs money (paid APIs, \
+services); sending or publishing anything. Never open passwords, keys or customers' personal or financial files.
 Reply in Vietnamese, short and plain, without technical words; say what you changed and where (time in seconds).";
 
 /// The system prompt for the project at `project_path`.
@@ -400,22 +401,22 @@ mod tests {
     }
 
     #[test]
-    fn args_have_strict_mcp_and_tool_limits() {
+    fn args_keep_claude_codes_own_tools() {
         let args = strings(&claude_args(&spec()));
-        for want in [
-            "-p",
-            "--strict-mcp-config",
-            "mcp__concat",
-            "Bash",
-            "WebSearch",
-            "60",
-        ] {
+        for want in ["-p", "--strict-mcp-config", "60"] {
             assert!(args.iter().any(|a| a == want), "missing {want} in {args:?}");
         }
         assert!(!args.iter().any(|a| a == "--resume"));
-        // Claude Code's own tools (Read, Glob, Grep...) are switched off.
-        let tools = args.iter().position(|a| a == "--tools").expect("--tools");
-        assert_eq!(args[tools + 1], "");
+        // Reading files, finding footage, running ffmpeg, the web: all of
+        // Claude Code's own tools stay, with no prompt nobody could answer.
+        for gone in ["--tools", "--disallowedTools", "--allowedTools"] {
+            assert!(!args.iter().any(|a| a == gone), "{gone} in {args:?}");
+        }
+        let mode = args
+            .iter()
+            .position(|a| a == "--permission-mode")
+            .expect("--permission-mode");
+        assert_eq!(args[mode + 1], "bypassPermissions");
     }
 
     #[test]
@@ -445,5 +446,7 @@ mod tests {
         assert!(prompt.contains(r"D:\Concat\thu-live"));
         assert!(prompt.contains("Vietnamese"));
         assert!(prompt.contains("project_save"));
+        assert!(prompt.contains("media_import"));
+        assert!(prompt.contains("Ask the person first"));
     }
 }

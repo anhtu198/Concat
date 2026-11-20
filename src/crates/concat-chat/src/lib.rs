@@ -7,3 +7,4 @@
 //! playhead, the selection and the project.
 
 pub mod claude;
+pub mod context;

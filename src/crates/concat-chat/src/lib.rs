@@ -8,5 +8,6 @@
 
 pub mod claude;
 pub mod context;
+pub mod runner;
 pub mod session;
 pub mod stream;

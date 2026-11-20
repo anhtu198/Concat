@@ -10,3 +10,13 @@ description = "Claude Code as a chat beside the timeline: finding it, running it
 [dependencies]
 concat-project.workspace = true
 serde_json.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+# runner.rs: a job object, so Stop ends Claude Code and every process it
+# started at once (taskkill /T takes over ten seconds on some machines).
+windows-sys = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_System_JobObjects",
+  "Win32_System_Threading",
+] }

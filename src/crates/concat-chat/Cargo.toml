@@ -1,0 +1,12 @@
+[package]
+name = "concat-chat"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+description = "Claude Code as a chat beside the timeline: finding it, running it headless on the project open in the window, reading its stream, and the playhead context each message carries."
+
+[dependencies]
+concat-project.workspace = true
+serde_json.workspace = true

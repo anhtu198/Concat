@@ -1225,6 +1225,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "concat-chat"
+version = "0.2.12"
+dependencies = [
+ "concat-project",
+ "serde_json",
+]
+
+[[package]]
 name = "concat-cli"
 version = "0.2.12"
 dependencies = [

@@ -178,6 +178,9 @@ export component ChatSidebar inherits Rectangle {
                     self.content-y = min(0px, self.visible-height - self.content-height);
                 }
                 VerticalLayout {
+                    // Held to the column's width so long replies wrap
+                    // instead of running off sideways.
+                    width: list.visible-width;
                     spacing: 6px;
                     alignment: start;
                     for bubble in Chat.bubbles: Bubble {

@@ -57,7 +57,7 @@ on:
         default: ""
       # velarista fork: a build to try a change, not to ship.
       quick:
-        description: Quick test build (no LTO, 16 codegen units) - much faster, a little slower app
+        description: Quick test build (thin LTO, 16 codegen units) - faster, a little slower app
         type: boolean
         default: false
   workflow_call:
@@ -388,17 +388,20 @@ jobs:
             echo "CARGO_PROFILE_APP_CODEGEN_UNITS=16"
           } >> "$GITHUB_ENV"
 
-      # velarista fork: "Quick test build" ticked when started by hand. The
-      # profile `quick` uses for trying a change (no LTO, sixteen units), in
-      # place of fat LTO on one thread, which is most of the Windows build's
-      # time. Only for trying a change; releases keep the profile. Set before
-      # the cache step, so it gets a cache of its own.
-      - name: No LTO (quick test build)
+      # velarista fork: "Quick test build" ticked when started by hand. Thin
+      # LTO and sixteen units, as the Intel Mac builds, in place of fat LTO
+      # on one thread, which is most of the Windows build's time. Not "no
+      # LTO": on Windows whisper-rs's unused SystemInfo::default then reaches
+      # link.exe, which cannot resolve its ggml_cpu_has_* calls (the CPU
+      # backend is a loaded module there) - LNK1120 in run 44865582434. LTO
+      # drops that dead code. Only for trying a change; releases keep the
+      # profile. Set before the cache step, so it gets a cache of its own.
+      - name: Thin LTO (quick test build)
         if: inputs.quick
         shell: bash
         run: |
           {
-            echo "CARGO_PROFILE_APP_LTO=false"
+            echo "CARGO_PROFILE_APP_LTO=thin"
             echo "CARGO_PROFILE_APP_CODEGEN_UNITS=16"
           } >> "$GITHUB_ENV"
 

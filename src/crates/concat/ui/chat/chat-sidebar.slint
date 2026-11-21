@@ -256,7 +256,10 @@ export component ChatSidebar inherits Rectangle {
         }
 
         // the edge, dragged like the workspace's own gutters
+        // A strip on the right edge only: without a width it would fill the
+        // column and its touch area would take every click.
         ColSplitter {
+            width: 8px;
             x: parent.width - self.width;
             height: parent.height;
             pressed => { Chat.resize-started(); }

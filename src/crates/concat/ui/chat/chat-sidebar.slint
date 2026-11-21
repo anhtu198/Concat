@@ -70,203 +70,220 @@ component Bubble inherits Rectangle {
     }
 }
 
+// Drawn like the workspace's own panes: a rounded card on the dark ground,
+// 8px from the window's edges, with the workspace's 8px left margin as the
+// gutter between them. The splitter sits over that gutter, so the window
+// places the workspace at `used` and this column on top of it.
 export component ChatSidebar inherits Rectangle {
-    in property <length> window-width;
-    width: Chat.open ? Chat.width : 40px;
-    background: Theme.panel;
+    /// The room the column takes from the workspace: the left margin and
+    /// the card. The gutter right of the card is the workspace's margin.
+    out property <length> used: Chat.open ? Chat.width : 48px;
+    width: root.used + 8px;
 
-    // ── folded: the rail ──
-    if !Chat.open: Rectangle {
-        VerticalLayout {
-            padding-top: 10px;
-            alignment: start;
-            HorizontalLayout {
-                alignment: center;
-                Rectangle {
-                    width: 30px;
-                    height: 30px;
-                    border-radius: Theme.r;
-                    background: rail-touch.has-hover ? Theme.field-hover : transparent;
+    // the ground under the margin and the card
+    Rectangle {
+        x: 0px;
+        width: root.used;
+        background: Theme.page;
+    }
+
+    card := Rectangle {
+        x: 8px;
+        y: 8px;
+        width: root.used - 8px;
+        height: root.height - 16px;
+        background: Theme.panel;
+        border-radius: Theme.r-lg;
+        clip: true;
+
+        // ── folded: the rail ──
+        if !Chat.open: Rectangle {
+            VerticalLayout {
+                padding-top: 10px;
+                alignment: start;
+                HorizontalLayout {
+                    alignment: center;
+                    Rectangle {
+                        width: 30px;
+                        height: 30px;
+                        border-radius: Theme.r;
+                        background: rail-touch.has-hover ? Theme.field-hover : transparent;
+                        Icon {
+                            glyph: Glyph.sparkle;
+                            size: 16px;
+                            tint: Theme.accent;
+                        }
+                        if Chat.busy || Chat.unread: Rectangle {
+                            x: parent.width - 9px;
+                            y: 3px;
+                            width: 6px;
+                            height: 6px;
+                            border-radius: 3px;
+                            background: Theme.accent;
+                        }
+                        rail-touch := TouchArea {
+                            clicked => { Chat.toggle(); }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── open: the conversation ──
+        if Chat.open: Rectangle {
+            VerticalLayout {
+                padding: 8px;
+                spacing: 6px;
+
+                // header
+                HorizontalLayout {
+                    spacing: 4px;
+                    height: Theme.h;
                     Icon {
                         glyph: Glyph.sparkle;
-                        size: 16px;
+                        size: 14px;
                         tint: Theme.accent;
+                        y: (parent.height - self.height) / 2;
                     }
-                    if Chat.busy || Chat.unread: Rectangle {
-                        x: parent.width - 9px;
-                        y: 3px;
-                        width: 6px;
-                        height: 6px;
-                        border-radius: 3px;
-                        background: Theme.accent;
+                    Text {
+                        text: I18n.t("chat.title");
+                        color: Theme.fg;
+                        font-size: Theme.fs-lg;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
                     }
-                    rail-touch := TouchArea {
+                    IconButton {
+                        glyph: Glyph.plus;
+                        label: I18n.t("chat.newConversation");
+                        enabled: !Chat.busy;
+                        clicked => { Chat.new-conversation(); }
+                    }
+                    IconButton {
+                        glyph: Glyph.chevron-left;
+                        label: I18n.t("chat.collapse");
                         clicked => { Chat.toggle(); }
                     }
                 }
+
+                if Chat.live-off: Rectangle {
+                    background: Theme.danger-soft;
+                    border-radius: Theme.r;
+                    VerticalLayout {
+                        padding: 8px;
+                        spacing: 6px;
+                        Text {
+                            text: I18n.t("chat.liveOff");
+                            wrap: word-wrap;
+                            color: Theme.fg;
+                            font-size: Theme.fs-sm;
+                        }
+                        Button {
+                            label: I18n.t("chat.enableLive");
+                            primary: true;
+                            clicked => { Chat.enable-live(); }
+                        }
+                    }
+                }
+
+                // the conversation; a new bubble scrolls it to its end
+                list := ScrollView {
+                    vertical-stretch: 1;
+                    property <int> tick: Chat.scroll-tick;
+                    changed tick => {
+                        self.content-y = min(0px, self.visible-height - self.content-height);
+                    }
+                    VerticalLayout {
+                        // Held to the column's width so long replies wrap
+                        // instead of running off sideways.
+                        width: list.visible-width;
+                        spacing: 6px;
+                        alignment: start;
+                        for bubble in Chat.bubbles: Bubble {
+                            bubble: bubble;
+                        }
+                    }
+                }
+
+                if Chat.where != "": Text {
+                    text: Chat.where;
+                    color: Theme.fg-dim;
+                    font-size: Theme.fs-xs;
+                }
+
+                // the message
+                Rectangle {
+                    min-height: 64px;
+                    max-height: 160px;
+                    background: Theme.field;
+                    border-radius: Theme.r;
+                    border-width: 1px;
+                    border-color: input.has-focus ? Theme.accent : Theme.line;
+                    keys := FocusScope {
+                        // Enter sends, Shift+Enter is a new line. Nothing else
+                        // is taken, so Telex typing (Unikey, EVKey) is untouched.
+                        capture-key-pressed(event) => {
+                            if (event.text == Key.Return && !event.modifiers.shift) {
+                                if (!Chat.busy && input.text != "") {
+                                    if (Chat.send(input.text)) {
+                                        input.text = "";
+                                    }
+                                }
+                                return accept;
+                            }
+                            return reject;
+                        }
+                        input := TextInput {
+                            x: 8px;
+                            y: 6px;
+                            width: parent.width - 16px;
+                            height: parent.height - 12px;
+                            single-line: false;
+                            wrap: word-wrap;
+                            color: Theme.fg;
+                            font-size: Theme.fs;
+                            selection-background-color: Theme.accent;
+                        }
+                    }
+                    if input.text == "": Text {
+                        x: 8px;
+                        y: 6px;
+                        text: I18n.t("chat.placeholder");
+                        color: Theme.fg-dim;
+                        font-size: Theme.fs;
+                    }
+                }
+
+                HorizontalLayout {
+                    alignment: end;
+                    if !Chat.busy: Button {
+                        label: I18n.t("chat.send");
+                        primary: true;
+                        enabled: input.text != "";
+                        clicked => {
+                            if (Chat.send(input.text)) {
+                                input.text = "";
+                            }
+                        }
+                    }
+                    if Chat.busy: Button {
+                        label: I18n.t("chat.stop");
+                        danger: true;
+                        clicked => { Chat.stop(); }
+                    }
+                }
             }
-        }
-        Rectangle {
-            x: parent.width - 1px;
-            width: 1px;
-            background: Theme.line;
         }
     }
 
-    // ── open: the conversation ──
-    if Chat.open: Rectangle {
-        VerticalLayout {
-            padding: 8px;
-            spacing: 6px;
-
-            // header
-            HorizontalLayout {
-                spacing: 4px;
-                height: Theme.h;
-                Icon {
-                    glyph: Glyph.sparkle;
-                    size: 14px;
-                    tint: Theme.accent;
-                    y: (parent.height - self.height) / 2;
-                }
-                Text {
-                    text: I18n.t("chat.title");
-                    color: Theme.fg;
-                    font-size: Theme.fs-lg;
-                    font-weight: 600;
-                    vertical-alignment: center;
-                    horizontal-stretch: 1;
-                }
-                IconButton {
-                    glyph: Glyph.plus;
-                    label: I18n.t("chat.newConversation");
-                    enabled: !Chat.busy;
-                    clicked => { Chat.new-conversation(); }
-                }
-                IconButton {
-                    glyph: Glyph.chevron-left;
-                    label: I18n.t("chat.collapse");
-                    clicked => { Chat.toggle(); }
-                }
-            }
-
-            if Chat.live-off: Rectangle {
-                background: Theme.danger-soft;
-                border-radius: Theme.r;
-                VerticalLayout {
-                    padding: 8px;
-                    spacing: 6px;
-                    Text {
-                        text: I18n.t("chat.liveOff");
-                        wrap: word-wrap;
-                        color: Theme.fg;
-                        font-size: Theme.fs-sm;
-                    }
-                    Button {
-                        label: I18n.t("chat.enableLive");
-                        primary: true;
-                        clicked => { Chat.enable-live(); }
-                    }
-                }
-            }
-
-            // the conversation; a new bubble scrolls it to its end
-            list := ScrollView {
-                vertical-stretch: 1;
-                property <int> tick: Chat.scroll-tick;
-                changed tick => {
-                    self.content-y = min(0px, self.visible-height - self.content-height);
-                }
-                VerticalLayout {
-                    // Held to the column's width so long replies wrap
-                    // instead of running off sideways.
-                    width: list.visible-width;
-                    spacing: 6px;
-                    alignment: start;
-                    for bubble in Chat.bubbles: Bubble {
-                        bubble: bubble;
-                    }
-                }
-            }
-
-            if Chat.where != "": Text {
-                text: Chat.where;
-                color: Theme.fg-dim;
-                font-size: Theme.fs-xs;
-            }
-
-            // the message
-            Rectangle {
-                min-height: 64px;
-                max-height: 160px;
-                background: Theme.field;
-                border-radius: Theme.r;
-                border-width: 1px;
-                border-color: input.has-focus ? Theme.accent : Theme.line;
-                keys := FocusScope {
-                    // Enter sends, Shift+Enter is a new line. Nothing else
-                    // is taken, so Telex typing (Unikey, EVKey) is untouched.
-                    capture-key-pressed(event) => {
-                        if (event.text == Key.Return && !event.modifiers.shift) {
-                            if (!Chat.busy && input.text != "") {
-                                if (Chat.send(input.text)) {
-                                    input.text = "";
-                                }
-                            }
-                            return accept;
-                        }
-                        return reject;
-                    }
-                    input := TextInput {
-                        x: 8px;
-                        y: 6px;
-                        width: parent.width - 16px;
-                        height: parent.height - 12px;
-                        single-line: false;
-                        wrap: word-wrap;
-                        color: Theme.fg;
-                        font-size: Theme.fs;
-                        selection-background-color: Theme.accent;
-                    }
-                }
-                if input.text == "": Text {
-                    x: 8px;
-                    y: 6px;
-                    text: I18n.t("chat.placeholder");
-                    color: Theme.fg-dim;
-                    font-size: Theme.fs;
-                }
-            }
-
-            HorizontalLayout {
-                alignment: end;
-                if !Chat.busy: Button {
-                    label: I18n.t("chat.send");
-                    primary: true;
-                    enabled: input.text != "";
-                    clicked => {
-                        if (Chat.send(input.text)) {
-                            input.text = "";
-                        }
-                    }
-                }
-                if Chat.busy: Button {
-                    label: I18n.t("chat.stop");
-                    danger: true;
-                    clicked => { Chat.stop(); }
-                }
-            }
-        }
-
-        // the edge, dragged like the workspace's own gutters
-        // A strip on the right edge only: without a width it would fill the
-        // column and its touch area would take every click.
-        ColSplitter {
-            width: 8px;
-            x: parent.width - self.width;
-            height: parent.height;
-            pressed => { Chat.resize-started(); }
-            moved(delta) => { Chat.resized(delta); }
-        }
+    // The gutter between the card and the workspace, dragged like the
+    // workspace's own. Its width is set: without one it would fill the
+    // column and take every click.
+    if Chat.open: ColSplitter {
+        x: root.used;
+        width: 8px;
+        height: root.height;
+        pressed => { Chat.resize-started(); }
+        moved(delta) => { Chat.resized(delta); }
     }
 }

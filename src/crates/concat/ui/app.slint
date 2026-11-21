@@ -811,11 +811,18 @@ export component App inherits Window {
             // editor.slint.
             // velarista: the Claude chat column on the far left, the full
             // height of the workspace beside it (src/chat.rs).
-            if !root.on-start && !root.phone: HorizontalLayout {
+            // The column is declared after the workspace so its splitter,
+            // over the workspace's left margin, is on top (chat-sidebar.slint).
+            if !root.on-start && !root.phone: Rectangle {
                 vertical-stretch: 1;
-                ChatSidebar {}
                 Workspace {
-                    horizontal-stretch: 1;
+                    x: chat-column.used;
+                    width: parent.width - chat-column.used;
+                    height: parent.height;
+                }
+                chat-column := ChatSidebar {
+                    x: 0px;
+                    height: parent.height;
                 }
             }
 

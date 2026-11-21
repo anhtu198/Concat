@@ -55,12 +55,21 @@ on:
         description: The ref to build (main when empty)
         type: string
         default: ""
+      # velarista fork: a build to try a change, not to ship.
+      quick:
+        description: Quick test build (no LTO, 16 codegen units) - much faster, a little slower app
+        type: boolean
+        default: false
   workflow_call:
     inputs:
       ref:
         description: The ref to build, when it is not the one this runs on
         type: string
         default: ""
+      quick:
+        description: Quick test build (velarista fork); releases leave it off
+        type: boolean
+        default: false
     secrets:
       APPLE_CERTIFICATE_P12:
         description: Base64 of a Developer ID Application .p12
@@ -376,6 +385,20 @@ jobs:
         run: |
           {
             echo "CARGO_PROFILE_APP_LTO=thin"
+            echo "CARGO_PROFILE_APP_CODEGEN_UNITS=16"
+          } >> "$GITHUB_ENV"
+
+      # velarista fork: "Quick test build" ticked when started by hand. The
+      # profile `quick` uses for trying a change (no LTO, sixteen units), in
+      # place of fat LTO on one thread, which is most of the Windows build's
+      # time. Only for trying a change; releases keep the profile. Set before
+      # the cache step, so it gets a cache of its own.
+      - name: No LTO (quick test build)
+        if: inputs.quick
+        shell: bash
+        run: |
+          {
+            echo "CARGO_PROFILE_APP_LTO=false"
             echo "CARGO_PROFILE_APP_CODEGEN_UNITS=16"
           } >> "$GITHUB_ENV"
 

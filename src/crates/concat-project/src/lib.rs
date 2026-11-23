@@ -2346,6 +2346,45 @@ mod tests {
         );
     }
 
+    /// A duplicate is the clip whole, laid right after it on its lane, in
+    /// one undo step; an unknown clip is skipped, and nothing to copy
+    /// changes nothing.
+    #[test]
+    fn a_duplicate_is_the_whole_clip_right_after_it() {
+        let (mut editor, _, clip_id) = fixture();
+        editor
+            .apply(Command::UpdateClip {
+                clip_id: clip_id.clone(),
+                patch: ClipPatch {
+                    volume: Some(0.4),
+                    ..ClipPatch::default()
+                },
+            })
+            .expect("sets the volume");
+        let outcome = editor
+            .apply(Command::DuplicateClips {
+                clip_ids: vec![clip_id.clone(), "no-such-clip".to_owned()],
+            })
+            .expect("duplicates");
+        let copy_id = outcome.created_id.expect("the copy is named");
+        let timeline = editor.project().active();
+        let source = timeline.clip(&clip_id).expect("the source");
+        let copy = timeline.clip(&copy_id).expect("the copy");
+        assert_eq!(timeline.clips.len(), 2);
+        assert_eq!(copy.start, source.start + source.duration);
+        assert_eq!(copy.duration, source.duration);
+        assert_eq!(copy.track_id, source.track_id);
+        assert_eq!(copy.volume, 0.4, "the copy carries the clip's sound");
+        editor.undo();
+        assert_eq!(editor.project().active().clips.len(), 1, "one undo step");
+        let nothing = editor
+            .apply(Command::DuplicateClips {
+                clip_ids: vec!["no-such-clip".to_owned()],
+            })
+            .expect("a no-op, not an error");
+        assert!(nothing.created_id.is_none());
+    }
+
     #[test]
     fn split_produces_source_continuous_halves_and_merge_rejoins_them() {
         let (mut editor, _, clip_id) = fixture();
@@ -3985,6 +4024,74 @@ mod tests {
         );
     }
 
+    /// A file's beats are asked for on that file alone: set, saved as a
+    /// word, left out of the document while off, undone like any edit; an
+    /// unknown item is a no-op.
+    #[test]
+    fn a_files_beats_are_its_own_undoable_edit_that_round_trips() {
+        use crate::model::BeatMarks;
+        let (mut editor, media_id, _clip_id) = fixture();
+        assert_eq!(editor.project().media[0].beats, None);
+        let before = editor.project().clone();
+
+        let on = editor
+            .apply(Command::SetMediaBeats {
+                media_id: media_id.clone(),
+                marks: Some(BeatMarks::Zoom),
+            })
+            .expect("sets");
+        assert!(on.applied);
+        editor
+            .apply(Command::SetMediaBeats {
+                media_id: media_id.clone(),
+                marks: Some(BeatMarks::Bar),
+            })
+            .expect("sets");
+        let saved = editor.to_document(&settings());
+        assert_eq!(saved["media"][0]["beats"], "bar");
+        let reopened = Editor::from_document(&saved).expect("loads");
+        assert_eq!(reopened.project().media[0].beats, Some(BeatMarks::Bar));
+        let untold = crate::doc::to_document(&settings(), &before);
+        assert!(untold["media"][0].get("beats").is_none());
+        let mut odd = saved.clone();
+        odd["media"][0]["beats"] = json!("everyThird");
+        let tolerant = Editor::from_document(&odd).expect("loads");
+        assert_eq!(tolerant.project().media[0].beats, None);
+
+        editor
+            .apply(Command::SetMediaBeats {
+                media_id: media_id.clone(),
+                marks: None,
+            })
+            .expect("clears");
+        assert_eq!(editor.project().media[0].beats, None);
+        let gone = editor
+            .apply(Command::SetMediaBeats {
+                media_id: "m999".to_owned(),
+                marks: Some(BeatMarks::Every),
+            })
+            .expect("an unknown item is a no-op");
+        assert!(!gone.applied);
+        editor.undo();
+        assert_eq!(
+            editor.project().media[0].beats,
+            Some(BeatMarks::Bar),
+            "undo of the switch-off brings the file's marks back"
+        );
+
+        let parsed: Command = serde_json::from_value(json!({
+            "op": "setMediaBeats", "mediaId": "m1", "marks": "second"
+        }))
+        .expect("parses");
+        assert!(matches!(
+            parsed,
+            Command::SetMediaBeats {
+                marks: Some(BeatMarks::Second),
+                ..
+            }
+        ));
+    }
+
     #[test]
     fn a_slot_fills_in_place_keeping_the_template_timing() {
         let (mut editor, media_id, clip_id) = fixture();
@@ -5579,6 +5686,7 @@ mod tests {
             audio_tracks: vec![],
             placeholder: false,
             color_range: None,
+            beats: None,
             color_space: Default::default(),
             origin: None,
             extra: Default::default(),
@@ -5618,6 +5726,7 @@ mod tests {
             audio_tracks: vec![],
             placeholder: false,
             color_range: None,
+            beats: None,
             color_space: Default::default(),
             origin: None,
             extra: Default::default(),

@@ -124,10 +124,13 @@ export component Seat inherits Rectangle {
             import-media => { Editor.import-media(); }
             filter-changed(filter) => { Editor.media-filter-changed(filter); }
             sort-changed(index) => { Editor.media-sort-changed(index); }
-            floor-pressed => { Editor.blur(); }
-            select(id, additive) => {
+            floor-pressed => {
                 Editor.blur();
-                Editor.media-select(id, additive);
+                Editor.media-focused();
+            }
+            select(id, toggle, range) => {
+                Editor.blur();
+                Editor.media-select(id, toggle, range);
             }
             band-selected(columns, from-col, to-col, from-row, to-row, additive) => {
                 Editor.media-band-selected(columns, from-col, to-col,
@@ -255,6 +258,14 @@ export component Seat inherits Rectangle {
             peak: Editor.peak;
             add-effect(audio) => { Editor.add-effect(audio); }
             remove-effect(id) => { Editor.remove-effect(id); }
+            beats-shown: Editor.beats-shown;
+            beats-tempo: Editor.beats-tempo;
+            beats-note: Editor.beats-note;
+            beats-on: Editor.beats-on;
+            beats-marks: Editor.beats-marks;
+            beats-on-changed(on) => { Editor.beats-on-changed(on); }
+            beats-marks-changed(index) => { Editor.beats-marks-changed(index); }
+            beats-cut => { Editor.beats-cut(); }
 
             catalogue-effects: Editor.catalogue-effects;
             catalogue-audio: Editor.catalogue-audio;

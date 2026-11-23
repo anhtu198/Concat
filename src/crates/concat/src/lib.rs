@@ -546,7 +546,25 @@ fn start(project: Option<std::path::PathBuf>, smoke: Smoke) -> Result<(), slint:
     // the window answered a touch. Asked on a worker; the sheet offers
     // what needs no asking meanwhile (H.264, and a desktop's software
     // encoders), and the publish after this lands brings the rest.
-    host::spawn_long(concat_media::encode::probe_encoders, |_, _, _, ()| {});
+    // And asked by a helper, this program started again, where the machine
+    // can start one: opening a chip's encoder runs its driver, and a
+    // driver that crashes there used to close the editor at launch. What
+    // the helper found is remembered here, and the asking after it opens
+    // nothing. Where no helper starts or speaks - a phone, a sandbox that
+    // forbids it - the encoders are asked here, as they were.
+    host::spawn_long(
+        || {
+            #[cfg(not(any(target_os = "android", target_os = "ios")))]
+            if let Ok(program) = std::env::current_exe()
+                && let Err(why) =
+                    concat_media::encode::apart::ask(&program, &[concat_media::encode::apart::FLAG])
+            {
+                log::warn!("export: the encoder helper was no use ({why}); asking here");
+            }
+            concat_media::encode::probe_encoders();
+        },
+        |_, _, _, ()| {},
+    );
 
     // Handed over once, here, and never replaced: a fresh model is a reset,
     // and a reset rebuilds every row that hangs off it.
@@ -1023,8 +1041,11 @@ fn start(project: Option<std::path::PathBuf>, smoke: Smoke) -> Result<(), slint:
     editor.on_media_sort_changed(on_window!(|state, index: i32| {
         state.handle(Msg::Media(MediaMsg::SortChanged(index)));
     }));
-    editor.on_media_select(on_window!(|state, row: i32, additive: bool| {
-        state.handle(Msg::Media(MediaMsg::Select { row, additive }));
+    editor.on_media_select(on_window!(|state, row: i32, toggle: bool, range: bool| {
+        state.handle(Msg::Media(MediaMsg::Select { row, toggle, range }));
+    }));
+    editor.on_media_focused(on_window!(|state| {
+        state.handle(Msg::Media(MediaMsg::Focused));
     }));
     editor.on_media_band_selected(on_window!(
         |state,
@@ -1571,6 +1592,18 @@ fn start(project: Option<std::path::PathBuf>, smoke: Smoke) -> Result<(), slint:
     editor.on_chain_add(on_window!(|state, audio: bool, id: SharedString| {
         state.chain_add(audio, id.as_str());
     }));
+    // ── Audio › Beats ──
+    // The selected clip's file's own: on, that file is listened to (and
+    // kept, so the next time is instant); every other file is left alone.
+    editor.on_beats_on_changed(on_window!(|state, on: bool| {
+        state.set_beats_on(on);
+    }));
+    editor.on_beats_marks_changed(on_window!(|state, index: i32| {
+        state.set_beat_marks(index);
+    }));
+    editor.on_beats_cut(on_window!(|state| {
+        state.cut_on_beats();
+    }));
     editor.on_chain_toggle(on_window!(|state, audio: bool, index: i32| {
         state.chain_toggle(audio, index);
     }));
@@ -2015,7 +2048,15 @@ fn start(project: Option<std::path::PathBuf>, smoke: Smoke) -> Result<(), slint:
             // Ctrl+B in a title split the clip and Backspace in a path field
             // deleted it; and Delete or Q with Export or Settings open cut
             // the timeline nobody could see.
+            //
+            // Copy / paste / select-all are the exception while typing: the
+            // same chords mean clip ops on the timeline, so when they bubble
+            // out of a TextInput the window would otherwise swallow them
+            // (#799). Forward them to the focused field instead.
             if action != "save" && (typing(&app) || shell.studio.borrow().sheet_open()) {
+                if typing(&app) && text_edit_shortcut(&app, action) {
+                    handled = true;
+                }
                 return;
             }
             handled = true;
@@ -2913,14 +2954,25 @@ fn start(project: Option<std::path::PathBuf>, smoke: Smoke) -> Result<(), slint:
     // memory all of that freed goes back to the system. Open on a 4K
     // project, idle, it held 590 MB, a hundred of it freed and kept by the
     // allocator; the caches fill again as soon as frames are asked for.
+    //
+    // A device that ran out of memory since the last look closes every
+    // reader not decoding now instead: a hardware one holds its pictures
+    // on the card, and the card is what ran out (#873).
     let reader_sweep = slint::Timer::default();
     let quiet = std::cell::Cell::new((u64::MAX, false));
+    let pressure = std::cell::Cell::new(concat_render::memory::pressure());
     reader_sweep.start(
         slint::TimerMode::Repeated,
         std::time::Duration::from_secs(5),
         move || {
             let pool = concat_host::scheduler().pool();
-            let closed = pool.close_idle(std::time::Duration::from_secs(10));
+            let now = concat_render::memory::pressure();
+            let idle = if now == pressure.replace(now) {
+                std::time::Duration::from_secs(10)
+            } else {
+                std::time::Duration::ZERO
+            };
+            let closed = pool.close_idle(idle);
             if closed > 0 {
                 log::debug!("memory: closed {closed} idle decoder(s)");
             }
@@ -3009,6 +3061,37 @@ fn typing(app: &App) -> bool {
         .borrow()
         .upgrade()
         .is_some_and(|item| item.downcast::<TextInput>().is_some())
+}
+
+/// Runs a text-editing shortcut on the focused [`TextInput`], if any.
+/// Used when Ctrl+C/V/A bubble out of a field and would otherwise be
+/// eaten as timeline clip actions (#799).
+fn text_edit_shortcut(app: &App, action: &str) -> bool {
+    use slint::private_unstable_api::re_exports::{TextInput, WindowInner};
+
+    let inner = WindowInner::from_pub(app.window());
+    let Some(item) = inner.focus_item.borrow().upgrade() else {
+        return false;
+    };
+    let Some(input) = item.downcast::<TextInput>() else {
+        return false;
+    };
+    let adapter = inner.window_adapter();
+    match action {
+        "copy" => {
+            input.as_pin_ref().copy(&adapter, &item);
+            true
+        }
+        "paste" => {
+            input.as_pin_ref().paste(&adapter, &item);
+            true
+        }
+        "select-all" => {
+            input.as_pin_ref().select_all(&adapter, &item);
+            true
+        }
+        _ => false,
+    }
 }
 
 /// Adds a pane of `kind` beside the largest seat: to its right when that

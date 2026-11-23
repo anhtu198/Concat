@@ -13,10 +13,10 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::model::{
-    AppliedFilter, AudioTrack, Background, Clip, ClipKind, ClipMotion, ColorRange, ColorSpace,
-    Crop, CustomFont, Cutout, CutoutMode, Enhanced, Framing, KeyEase, KeyProperty, Mask, MediaItem,
-    MediaKind, MediaOrigin, Project, RunStyle, ShapeStyle, SpeedPoint, Stabilize, Stroke,
-    TextStyle, Timeline, Track, Transition, VideoSettings, VoiceMix,
+    AppliedFilter, AudioTrack, Background, BeatMarks, Clip, ClipKind, ClipMotion, ColorRange,
+    ColorSpace, Crop, CustomFont, Cutout, CutoutMode, Enhanced, Framing, KeyEase, KeyProperty,
+    Mask, MediaItem, MediaKind, MediaOrigin, Project, RunStyle, ShapeStyle, SpeedPoint, Stabilize,
+    Stroke, TextStyle, Timeline, Track, Transition, VideoSettings, VoiceMix,
 };
 
 mod audio;
@@ -685,6 +685,17 @@ pub enum Command {
         /// The cut point, in timeline seconds.
         time: f64,
     },
+    /// Copies each named clip whole - its look and sound, keys, effects,
+    /// masks, crop and the rest - and lays the copy right after the clip's
+    /// own end on its own lane, or in the nearest gap from there. The
+    /// latest goes first, so a copy never lands where an earlier one still
+    /// waits. A copy has no transition in and no link to the picture its
+    /// sound came off: those belong to its neighbours. The copy of the
+    /// earliest clip is the created id; an unknown clip is skipped.
+    DuplicateClips {
+        /// The clips to copy - normally the selection.
+        clip_ids: Vec<String>,
+    },
     /// Points a clip at another file - the enhanced or reversed copy of
     /// its media - adding the file to the bin first when it is not there.
     /// The clip's length, looks and name are kept, and its in-point unless
@@ -995,6 +1006,17 @@ pub enum Command {
         /// `limited` or `full`, or None to go back to reading the file's
         /// own tag.
         range: Option<ColorRange>,
+    },
+    /// Asks for a media file's beats - listened to, marked along every
+    /// clip of it on every timeline at the beats `marks` names, snapped to
+    /// when the timeline snaps - or, with None, stops asking. A file of
+    /// its own, not the app's: one song cut to, another only underneath.
+    /// An unknown id is a no-op.
+    SetMediaBeats {
+        /// The bin item.
+        media_id: String,
+        /// Which beats, or None for none.
+        marks: Option<BeatMarks>,
     },
 }
 
@@ -1374,7 +1396,8 @@ pub fn apply(
         | Command::AddFont { .. }
         | Command::RemoveFont { .. }
         | Command::UpdateMediaPath { .. }
-        | Command::SetMediaColorRange { .. }) => media::apply(project, mint, command),
+        | Command::SetMediaColorRange { .. }
+        | Command::SetMediaBeats { .. }) => media::apply(project, mint, command),
         command @ (Command::AddClip { .. }
         | Command::AddClipAtFirstFree { .. }
         | Command::AddClipsInSequence { .. }
@@ -1385,6 +1408,7 @@ pub fn apply(
         | Command::MoveClips { .. }
         | Command::TrimClip { .. }
         | Command::SplitClips { .. }
+        | Command::DuplicateClips { .. }
         | Command::FreezeFrame { .. }
         | Command::ReplaceClipMedia { .. }
         | Command::SetClipEnhanced { .. }
